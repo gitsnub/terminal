@@ -14,6 +14,8 @@
 using namespace Microsoft::Console;
 using namespace Microsoft::Console::Types;
 
+using PointTree = interval_tree::IntervalTree<til::point, size_t>;
+
 // Routine Description:
 // - Creates a new instance of TextBuffer
 // Arguments:
@@ -35,7 +37,8 @@ TextBuffer::TextBuffer(const COORD screenBufferSize,
     _unicodeStorage{},
     _renderTarget{ renderTarget },
     _size{},
-    _currentHyperlinkId{ 1 }
+    _currentHyperlinkId{ 1 },
+    _currentPatternId{ 0 }
 {
     // initialize ROWs
     for (size_t i = 0; i < static_cast<size_t>(screenBufferSize.Y); ++i)
@@ -2357,4 +2360,77 @@ void TextBuffer::CopyHyperlinkMaps(const TextBuffer& other)
 {
     _hyperlinkMap = other._hyperlinkMap;
     _hyperlinkCustomIdMap = other._hyperlinkCustomIdMap;
+}
+
+// Method Description:
+// - Adds a regex pattern we should search for
+// - The searching does not happen here, we only search when asked to by TerminalCore
+// Arguments:
+// - The regex pattern
+// Return value:
+// - An ID that the caller should associate with the given pattern
+const size_t TextBuffer::AddPatternRecognizer(const std::wstring_view regexString)
+{
+    ++_currentPatternId;
+    _IdsAndPatterns.emplace(std::make_pair(_currentPatternId, regexString));
+    return _currentPatternId;
+}
+
+// Method Description:
+// - Finds patterns within the requested region of the text buffer
+// Arguments:
+// - The firstRow to start searching from
+// - The lastRow to search
+// Return value:
+// - An interval tree containing the patterns found
+PointTree TextBuffer::GetPatterns(const size_t firstRow, const size_t lastRow) const
+{
+    PointTree::interval_vector intervals;
+
+    std::wstring concatAll;
+    const auto rowSize = GetRowByOffset(0).size();
+    concatAll.reserve(rowSize * (lastRow - firstRow + 1));
+
+    // to deal with text that spans multiple lines, we will first concatenate
+    // all the text into one string and find the patterns in that string
+    for (auto i = firstRow; i <= lastRow; ++i)
+    {
+        auto row = GetRowByOffset(i);
+        concatAll += row.GetCharRow().GetText();
+    }
+
+    // for each pattern we know of, iterate through the string
+    for (const auto& idAndPattern : _IdsAndPatterns)
+    {
+        std::wregex regexObj{ idAndPattern.second };
+
+        // search through the run with our regex object
+        auto words_begin = std::wsregex_iterator(concatAll.begin(), concatAll.end(), regexObj);
+        auto words_end = std::wsregex_iterator();
+
+        size_t lenUpToThis = 0;
+        for (auto i = words_begin; i != words_end; ++i)
+        {
+            // record the locations -
+            // when we find a match, the prefix is text that is between this
+            // match and the previous match, so we use the size of the prefix
+            // along with the size of the match to determine the locations
+            const auto prefixSize = i->prefix().str().size();
+            const auto start = lenUpToThis + prefixSize;
+            const auto end = start + i->str().size();
+            lenUpToThis = end;
+
+            const til::point startCoord{ gsl::narrow<SHORT>(start % rowSize), gsl::narrow<SHORT>(start / rowSize) };
+            const til::point endCoord{ gsl::narrow<SHORT>(end % rowSize), gsl::narrow<SHORT>(end / rowSize) };
+
+            // store the intervals
+            // NOTE: these intervals are relative to the VIEWPORT not the buffer
+            // Keeping these relative to the viewport for now because its the renderer
+            // that actually uses these locations and the renderer works relative to
+            // the viewport
+            intervals.push_back(PointTree::interval(startCoord, endCoord, idAndPattern.first));
+        }
+    }
+    PointTree result(std::move(intervals));
+    return result;
 }

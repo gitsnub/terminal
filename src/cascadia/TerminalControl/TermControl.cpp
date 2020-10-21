@@ -35,6 +35,9 @@ constexpr const auto ScrollBarUpdateInterval = std::chrono::milliseconds(8);
 // The minimum delay between updating the TSF input control.
 constexpr const auto TsfRedrawInterval = std::chrono::milliseconds(100);
 
+// The minimum delay between updating the locations of regex patterns
+constexpr const auto UpdatePatternLocationsInterval = std::chrono::milliseconds(500);
+
 DEFINE_ENUM_FLAG_OPERATORS(winrt::Microsoft::Terminal::TerminalControl::CopyFormat);
 
 namespace winrt::Microsoft::Terminal::TerminalControl::implementation
@@ -107,6 +110,7 @@ namespace winrt::Microsoft::Terminal::TerminalControl::implementation
         // This event is explicitly revoked in the destructor: does not need weak_ref
         auto onReceiveOutputFn = [this](const hstring str) {
             _terminal->Write(str);
+            _updatePatternLocations->Run();
         };
         _connectionOutputEventToken = _connection.TerminalOutput(onReceiveOutputFn);
 
@@ -144,6 +148,16 @@ namespace winrt::Microsoft::Terminal::TerminalControl::implementation
                 }
             },
             TsfRedrawInterval,
+            Dispatcher());
+
+        _updatePatternLocations = std::make_shared<ThrottledFunc<>>(
+            [weakThis = get_weak()]() {
+                if (auto control{ weakThis.get() })
+                {
+                    control->UpdatePatternLocations();
+                }
+            },
+            UpdatePatternLocationsInterval,
             Dispatcher());
 
         _updateScrollBar = std::make_shared<ThrottledFunc<ScrollBarUpdate>>(
@@ -1342,13 +1356,16 @@ namespace winrt::Microsoft::Terminal::TerminalControl::implementation
                 _lastHoveredCell = terminalPos;
 
                 const auto newId = _terminal->GetHyperlinkIdAtPosition(terminalPos);
-                // If the hyperlink ID changed, trigger a redraw all (so this will happen both when we move
-                // onto a link and when we move off a link)
-                if (newId != _lastHoveredId)
+                const auto newInterval = _terminal->GetHyperlinkIntervalFromPosition(terminalPos);
+                // If the hyperlink ID changed or the interval changed, trigger a redraw all
+                // (so this will happen both when we move onto a link and when we move off a link)
+                if (newId != _lastHoveredId || (newInterval != _lastHoveredInterval))
                 {
-                    _renderEngine->UpdateHyperlinkHoveredId(newId);
-                    _renderer->TriggerRedrawAll();
                     _lastHoveredId = newId;
+                    _lastHoveredInterval = newInterval;
+                    _renderEngine->UpdateHyperlinkHoveredId(newId);
+                    _renderer->UpdateLastHoveredInterval(newInterval);
+                    _renderer->TriggerRedrawAll();
                 }
             }
         }
@@ -1535,6 +1552,15 @@ namespace winrt::Microsoft::Terminal::TerminalControl::implementation
     }
 
     // Method Description:
+    // - Tell TerminalCore to update its knowledge about the locations of visible regex patterns
+    // - We should call this (through the throttled function) when something causes the visible
+    //   region to change, such as when new text enters the buffer or the viewport is scrolled
+    void TermControl::UpdatePatternLocations()
+    {
+        _terminal->UpdatePatterns();
+    }
+
+    // Method Description:
     // - Adjust the opacity of the acrylic background in response to a mouse
     //   scrolling event.
     // Arguments:
@@ -1647,6 +1673,10 @@ namespace winrt::Microsoft::Terminal::TerminalControl::implementation
             //      Make sure selection reflects that immediately.
             _SetEndSelectionPointAtCursor(point);
         }
+
+        // Clear the regex pattern tree so the renderer does not try to render them while scrolling
+        _terminal->ClearPatternTree();
+        _updatePatternLocations->Run();
     }
 
     void TermControl::_ScrollbarChangeHandler(Windows::Foundation::IInspectable const& /*sender*/,
@@ -2261,6 +2291,8 @@ namespace winrt::Microsoft::Terminal::TerminalControl::implementation
         update.newValue = viewTop;
 
         _updateScrollBar->Run(update);
+        _terminal->ClearPatternTree();
+        _updatePatternLocations->Run();
     }
 
     // Method Description:

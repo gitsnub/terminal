@@ -49,6 +49,7 @@ SIZENS
 GETDESKWALLPAPER
 snprintf
 spsc
+sregex
 STDCPP
 strchr
 Subheader
@@ -61,6 +62,7 @@ tx
 userenv
 wcsstr
 wcstoui
+wsregex
 XDocument
 XElement
 XParse
