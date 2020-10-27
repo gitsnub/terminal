@@ -7,6 +7,8 @@
 #include "ColorTableEntry.g.cpp"
 #include "ColorSchemes.g.cpp"
 
+#include <LibraryResources.h>
+
 using namespace winrt;
 using namespace winrt::Windows::UI;
 using namespace winrt::Windows::UI::Xaml;
@@ -18,23 +20,23 @@ using namespace winrt::Microsoft::Terminal::Settings::Model;
 
 namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
 {
-    static constexpr std::array<std::string_view, 16> TableColors = {
-        "Black",
-        "Red",
-        "Green",
-        "Yellow",
-        "Blue",
-        "Purple",
-        "Cyan",
-        "White",
-        "Bright Black",
-        "Bright Red",
-        "Bright Green",
-        "Bright Yellow",
-        "Bright Blue",
-        "Bright Purple",
-        "Bright Cyan",
-        "Bright White"
+    static const std::array<hstring, 16> TableColorNames = {
+        RS_(L"ColorScheme_Black/Header"),
+        RS_(L"ColorScheme_Red/Header"),
+        RS_(L"ColorScheme_Green/Header"),
+        RS_(L"ColorScheme_Yellow/Header"),
+        RS_(L"ColorScheme_Blue/Header"),
+        RS_(L"ColorScheme_Purple/Header"),
+        RS_(L"ColorScheme_Cyan/Header"),
+        RS_(L"ColorScheme_White/Header"),
+        RS_(L"ColorScheme_BrightBlack/Header"),
+        RS_(L"ColorScheme_BrightRed/Header"),
+        RS_(L"ColorScheme_BrightGreen/Header"),
+        RS_(L"ColorScheme_BrightYellow/Header"),
+        RS_(L"ColorScheme_BrightBlue/Header"),
+        RS_(L"ColorScheme_BrightPurple/Header"),
+        RS_(L"ColorScheme_BrightCyan/Header"),
+        RS_(L"ColorScheme_BrightWhite/Header")
     };
 
     ColorSchemes::ColorSchemes() :
@@ -42,13 +44,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         _CurrentColorTable{ single_threaded_observable_vector<Editor::ColorTableEntry>() }
     {
         InitializeComponent();
-
-        // Initialize our list of color schemes and initially set color scheme and table.
-        auto colorSchemeMap = MainPage::Settings().GlobalSettings().ColorSchemes();
-        for (const auto& pair : MainPage::Settings().GlobalSettings().ColorSchemes())
-        {
-            _ColorSchemeList.Append(pair.Key());
-        }
+        _UpdateColorSchemeList();
     }
 
     IObservableVector<hstring> ColorSchemes::ColorSchemeList()
@@ -56,6 +52,13 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         return _ColorSchemeList;
     }
 
+    // Function Description:
+    // - Called when a different color scheme is selected. Updates our current
+    //   color scheme and updates our currently modifiable color table.
+    // Arguments:
+    // - args: The selection changed args that tells us what's the new color scheme selected.
+    // Return Value:
+    // - <none>
     void ColorSchemes::ColorSchemeSelectionChanged(IInspectable const& /*sender*/,
                                                    SelectionChangedEventArgs const& args)
     {
@@ -66,6 +69,12 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         _UpdateColorTable(colorScheme);
     }
 
+    // Function Description:
+    // - Updates the list of all color schemes available to choose from.
+    // Arguments:
+    // - <none>
+    // Return Value:
+    // - <none>
     void ColorSchemes::_UpdateColorSchemeList()
     {
         auto colorSchemeMap = MainPage::Settings().GlobalSettings().ColorSchemes();
@@ -75,38 +84,137 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         }
     }
 
+    // Function Description:
+    // - Called when a ColorPicker control has selected a new color. This is specifically
+    //   called by color pickers assigned to a color table entry. It takes the index
+    //   that's been stuffed in the Tag property of the color picker and uses it
+    //   to update the color table accordingly.
+    // Arguments:
+    // - sender: the color picker that raised this event.
+    // - args: the args that contains the new color that was picked.
+    // Return Value:
+    // - <none>
     void ColorSchemes::ColorPickerChanged(IInspectable const& sender,
-                                          ColorChangedEventArgs const& /*args*/)
+                                          ColorChangedEventArgs const& args)
     {
         if (auto picker = sender.try_as<ColorPicker>())
         {
-            // TODO: Commented out for now because Tag currently won't bind to an index correctly.
-            // The idea is this function will grab the index from the tag and call SetColorTableEntry.
-            //auto index = winrt::unbox_value<uint8_t>(picker.Tag());
-            //CurrentColorScheme().SetColorTableEntry(index, args.NewColor());
+            if (auto tag = picker.Tag())
+            {
+                auto index = winrt::unbox_value<uint8_t>(tag);
+                CurrentColorScheme().SetColorTableEntry(index, args.NewColor());
+            }
         }
     }
 
-    // Update the Page's displayed color table
+    // Function Description:
+    // - Updates the currently modifiable color table based on the given current color scheme.
+    // Arguments:
+    // - colorScheme: the color scheme to retrieve the color table from
+    // Return Value:
+    // - <none>
     void ColorSchemes::_UpdateColorTable(const Model::ColorScheme& colorScheme)
     {
         _CurrentColorTable.Clear();
-        for (uint8_t i = 0; i < TableColors.size(); ++i)
+        for (uint8_t i = 0; i < TableColorNames.size(); ++i)
         {
             auto entry = winrt::make<ColorTableEntry>(i, colorScheme.Table()[i]);
             _CurrentColorTable.Append(entry);
         }
     }
 
-    ColorTableEntry::ColorTableEntry(uint32_t index, Windows::UI::Color color)
+    // Function Description:
+    // - Called when a TextBox receives focus. We use this to save
+    //   the text before any changes are made in case an invalid
+    //   hex code is entered in a TextBox.
+    // Arguments:
+    // - sender: the textbox that raised the event.
+    // Return Value:
+    // - <none>
+    void ColorSchemes::TextBoxGotFocus(IInspectable const& sender,
+                                       RoutedEventArgs const& /*args*/)
     {
-        Index(winrt::box_value(index));
-        Color(color);
-        Name(to_hstring(TableColors[index]));
+        if (auto textBox = sender.try_as<TextBox>())
+        {
+            // Save the text of the textbox being modified.
+            _textBoxSavedText = textBox.Text();
+        }
     }
 
-    Windows::UI::Xaml::Media::Brush ColorTableEntry::ColorToBrush(Windows::UI::Color color)
+    // Function Description:
+    // - Called when a TextBox loses focus. We use this handler along with
+    //   a OneWay binding to the color because it gives us the ability to revert
+    //   the text in a TextBox back to the original hex color if an invalid
+    //   hex color is given.
+    //   Since this handler is used for both color table TextBoxes and non color table
+    //   boxes, we use the Tag property of the TextBox to identify what color to update.
+    //   If the Tag is an integer, we need to update a color in the color table. If the Tag
+    //   is a string, we need to update one of the Foreground, Background, etc, colors.
+    // Arguments:
+    // - sender: the textbox that just lost focus.
+    // Return Value:
+    // - <none>
+    void ColorSchemes::TextBoxLostFocus(IInspectable const& sender,
+                                        RoutedEventArgs const& /*args*/)
+    {
+        if (auto textBox = sender.try_as<TextBox>())
+        {
+            if (auto tag = textBox.Tag())
+            {
+                til::color newColor;
+                try
+                {
+                    newColor = til::color::HexToColor(textBox.Text().c_str());
+                }
+                catch (...)
+                {
+                    // If the string wasn't a valid hex string, revert it back to the original color
+                    textBox.Text(_textBoxSavedText);
+                    return;
+                }
+
+                // The tag is either an index to our color table, or a string representing the
+                // colors not in the color table (e.g. Foreground, Background).
+                auto propertyValue = tag.as<IPropertyValue>();
+                if (propertyValue.Type() == Windows::Foundation::PropertyType::UInt8)
+                {
+                    auto index = winrt::unbox_value<uint8_t>(tag);
+                    CurrentColorScheme().SetColorTableEntry(index, newColor);
+                    CurrentColorTable().GetAt(index).Color(newColor);
+                }
+                else if (propertyValue.Type() == Windows::Foundation::PropertyType::String)
+                {
+                    auto colorID = winrt::unbox_value<hstring>(tag);
+                    if (colorID == L"Foreground")
+                    {
+                        CurrentColorScheme().Foreground(newColor);
+                    }
+                    else if (colorID == L"Background")
+                    {
+                        CurrentColorScheme().Background(newColor);
+                    }
+                    else if (colorID == L"CursorColor")
+                    {
+                        CurrentColorScheme().CursorColor(newColor);
+                    }
+                    else if (colorID == L"SelectionBackground")
+                    {
+                        CurrentColorScheme().SelectionBackground(newColor);
+                    }
+                }
+            }
+        }
+    }
+
+    Windows::UI::Xaml::Media::Brush ColorSchemes::ColorToBrush(Windows::UI::Color color)
     {
         return SolidColorBrush(color);
+    }
+
+    ColorTableEntry::ColorTableEntry(uint8_t index, Windows::UI::Color color)
+    {
+        Name(TableColorNames[index]);
+        Index(winrt::box_value<uint8_t>(index));
+        Color(color);
     }
 }

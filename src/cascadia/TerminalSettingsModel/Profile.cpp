@@ -433,7 +433,7 @@ std::wstring Profile::EvaluateStartingDirectory(const std::wstring& directory)
 //   will _not_ change the profile's GUID.
 void Profile::GenerateGuidIfNecessary() noexcept
 {
-    if (!_Guid.has_value())
+    if (!_getGuidImpl().has_value())
     {
         // Always use the name to generate the temporary GUID. That way, across
         // reloads, we'll generate the same static GUID.
@@ -550,18 +550,3 @@ void Profile::BackgroundImageVerticalAlignment(const VerticalAlignment& value) n
     }
 }
 #pragma endregion
-
-bool Profile::HasConnectionType() const noexcept
-{
-    return _ConnectionType.has_value();
-}
-
-winrt::guid Profile::ConnectionType() const noexcept
-{
-    return *_ConnectionType;
-}
-
-void Profile::ConnectionType(const winrt::guid& conType) noexcept
-{
-    _ConnectionType = conType;
-}

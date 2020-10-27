@@ -75,19 +75,10 @@ void GlobalAppSettings::_FinalizeInheritance()
     FAIL_FAST_IF(_parents.size() > 1);
     for (auto parent : _parents)
     {
-        _keymap = parent->_keymap->Copy();
-        std::copy(parent->_keybindingsWarnings.begin(), parent->_keybindingsWarnings.end(), std::back_inserter(_keybindingsWarnings));
-        for (auto kv : parent->_colorSchemes)
-        {
-            const auto schemeImpl{ winrt::get_self<ColorScheme>(kv.Value()) };
-            _colorSchemes.Insert(kv.Key(), *schemeImpl->Copy());
-        }
-
-        for (auto kv : parent->_commands)
-        {
-            const auto commandImpl{ winrt::get_self<Command>(kv.Value()) };
-            _commands.Insert(kv.Key(), *commandImpl->Copy());
-        }
+        _keymap = std::move(parent->_keymap);
+        _keybindingsWarnings = std::move(parent->_keybindingsWarnings);
+        _colorSchemes = std::move(parent->_colorSchemes);
+        _commands = std::move(parent->_commands);
     }
 }
 
@@ -122,19 +113,28 @@ winrt::com_ptr<GlobalAppSettings> GlobalAppSettings::Copy() const
     globals->_UnparsedDefaultProfile = _UnparsedDefaultProfile;
     globals->_validDefaultProfile = _validDefaultProfile;
     globals->_defaultProfile = _defaultProfile;
-    globals->_keymap = _keymap->Copy();
+    if (_keymap)
+    {
+        globals->_keymap = _keymap->Copy();
+    }
     std::copy(_keybindingsWarnings.begin(), _keybindingsWarnings.end(), std::back_inserter(globals->_keybindingsWarnings));
 
-    for (auto kv : _colorSchemes)
+    if (_colorSchemes)
     {
-        const auto schemeImpl{ winrt::get_self<ColorScheme>(kv.Value()) };
-        globals->_colorSchemes.Insert(kv.Key(), *schemeImpl->Copy());
+        for (auto kv : _colorSchemes)
+        {
+            const auto schemeImpl{ winrt::get_self<ColorScheme>(kv.Value()) };
+            globals->_colorSchemes.Insert(kv.Key(), *schemeImpl->Copy());
+        }
     }
 
-    for (auto kv : _commands)
+    if (_commands)
     {
-        const auto commandImpl{ winrt::get_self<Command>(kv.Value()) };
-        globals->_commands.Insert(kv.Key(), *commandImpl->Copy());
+        for (auto kv : _commands)
+        {
+            const auto commandImpl{ winrt::get_self<Command>(kv.Value()) };
+            globals->_commands.Insert(kv.Key(), *commandImpl->Copy());
+        }
     }
 
     // Globals only ever has 1 parent
@@ -239,7 +239,8 @@ void GlobalAppSettings::LayerJson(const Json::Value& json)
     // _validDefaultProfile keeps track of whether we've verified that DefaultProfile points to something
     // CascadiaSettings::_ResolveDefaultProfile performs a validation and updates DefaultProfile() with the
     // resolved value, then making it valid.
-    _validDefaultProfile = !JsonUtils::GetValueForKey(json, DefaultProfileKey, _UnparsedDefaultProfile);
+    _validDefaultProfile = false;
+    JsonUtils::GetValueForKey(json, DefaultProfileKey, _UnparsedDefaultProfile);
 
     JsonUtils::GetValueForKey(json, AlwaysShowTabsKey, _AlwaysShowTabs);
 
